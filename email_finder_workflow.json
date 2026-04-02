@@ -1,0 +1,153 @@
+{
+  "name": "Project 1 - Apollo Email Finder for International Buyers",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 5 }] }
+      },
+      "id": "p1-001",
+      "name": "Trigger Every 5 Min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [60, 300]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "documentId": { "__rl": true, "value": "YOUR_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Sheet1", "mode": "name" },
+        "filtersUI": { "values": [{ "lookupColumn": "Status", "lookupValue": "Pending" }] },
+        "options": { "returnFirstMatch": true }
+      },
+      "id": "p1-002",
+      "name": "Read Pending Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [{ "id": "c1", "leftValue": "={{ $json.Company_Name }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } }],
+          "combinator": "and"
+        }
+      },
+      "id": "p1-003",
+      "name": "Has Data?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": { "__rl": true, "value": "YOUR_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Sheet1", "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": { "Status": "Processing", "Row_Number": "={{ $('Read Pending Row').item.json.Row_Number }}" },
+          "matchingColumns": ["Row_Number"]
+        }
+      },
+      "id": "p1-004",
+      "name": "Mark Processing",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/v1/people/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Cache-Control", "value": "no-cache" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ api_key: 'YOUR_APOLLO_KEY', q_organization_name: $('Read Pending Row').item.json.Company_Name, person_titles: ['CEO','Owner','Director','Founder','Managing Director','President'], organization_locations: [$('Read Pending Row').item.json.Country], contact_email_status: ['verified','likely to engage'], page: 1, per_page: 5 }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "p1-005",
+      "name": "Apollo Search People",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/v1/organizations/search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/json" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ api_key: 'YOUR_APOLLO_KEY', q_organization_name: $('Read Pending Row').item.json.Company_Name, organization_locations: [$('Read Pending Row').item.json.Country], page: 1, per_page: 3 }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "p1-006",
+      "name": "Apollo Search Company",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [860, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "const people = $('Apollo Search People').item.json;\nconst company = $('Apollo Search Company').item.json;\nconst row = $('Read Pending Row').item.json;\n\nconst contacts = people.people || [];\nconst org = (company.organizations || [])[0] || {};\n\nconst emails = contacts.filter(p => p.email).map(p => p.email);\nconst phones = contacts.filter(p => p.phone_numbers && p.phone_numbers.length).map(p => p.phone_numbers[0].sanitized_number);\nconst topContact = contacts[0] || {};\n\nconst found = emails.length > 0 || org.primary_domain;\n\nreturn {\n  row_number: row.Row_Number,\n  Status: found ? 'Done' : 'Not Found',\n  Apollo_Email_1: emails[0] || '',\n  Apollo_Email_2: emails[1] || '',\n  Apollo_Email_3: emails[2] || '',\n  Contact_Name: (topContact.first_name || '') + ' ' + (topContact.last_name || ''),\n  Contact_Title: topContact.title || '',\n  Contact_LinkedIn: topContact.linkedin_url || '',\n  Contact_Phone: phones[0] || '',\n  Company_Domain: org.primary_domain || topContact.organization && topContact.organization.primary_domain || '',\n  Apollo_Confidence: contacts.length > 0 ? 'HIGH' : (org.primary_domain ? 'MEDIUM' : 'LOW'),\n  Research_Notes: 'Apollo found ' + contacts.length + ' contacts, ' + emails.length + ' emails',\n  Last_Updated: new Date().toISOString()\n};"
+      },
+      "id": "p1-007",
+      "name": "Process Apollo Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1060, 380]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": { "__rl": true, "value": "YOUR_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Sheet1", "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "={{ $json.Status }}",
+            "Apollo_Email_1": "={{ $json.Apollo_Email_1 }}",
+            "Apollo_Email_2": "={{ $json.Apollo_Email_2 }}",
+            "Apollo_Email_3": "={{ $json.Apollo_Email_3 }}",
+            "Contact_Name": "={{ $json.Contact_Name }}",
+            "Contact_Title": "={{ $json.Contact_Title }}",
+            "Contact_LinkedIn": "={{ $json.Contact_LinkedIn }}",
+            "Contact_Phone": "={{ $json.Contact_Phone }}",
+            "Company_Domain": "={{ $json.Company_Domain }}",
+            "Apollo_Confidence": "={{ $json.Apollo_Confidence }}",
+            "Research_Notes": "={{ $json.Research_Notes }}",
+            "Last_Updated": "={{ $json.Last_Updated }}",
+            "Row_Number": "={{ $json.row_number }}"
+          },
+          "matchingColumns": ["Row_Number"]
+        }
+      },
+      "id": "p1-008",
+      "name": "Write Results to Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.2,
+      "position": [1260, 380]
+    }
+  ],
+  "connections": {
+    "Trigger Every 5 Min": { "main": [[{ "node": "Read Pending Row", "type": "main", "index": 0 }]] },
+    "Read Pending Row": { "main": [[{ "node": "Has Data?", "type": "main", "index": 0 }]] },
+    "Has Data?": { "main": [[{ "node": "Mark Processing", "type": "main", "index": 0 }], []] },
+    "Mark Processing": { "main": [[{ "node": "Apollo Search People", "type": "main", "index": 0 }, { "node": "Apollo Search Company", "type": "main", "index": 0 }]] },
+    "Apollo Search People": { "main": [[{ "node": "Process Apollo Results", "type": "main", "index": 0 }]] },
+    "Apollo Search Company": { "main": [[{ "node": "Process Apollo Results", "type": "main", "index": 0 }]] },
+    "Process Apollo Results": { "main": [[{ "node": "Write Results to Sheet", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "timezone": "Asia/Kolkata" },
+  "tags": ["Apollo", "Email Finder", "International Buyers", "B2B"],
+  "pinData": {}, "staticData": null, "versionId": "1"
+}
